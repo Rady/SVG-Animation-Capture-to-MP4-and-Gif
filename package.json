@@ -1,0 +1,13 @@
+{
+  "name": "svg-animation-capture",
+  "version": "1.0.0",
+  "description": "Capture SVG animations to MP4 using headless browser",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer": "^21.6.1",
+    "fluent-ffmpeg": "^2.1.2"
+  }
+}
