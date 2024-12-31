@@ -33,9 +33,8 @@ The application supports both local files and URLs:
 
 The output will be saved as `filename_timestamp.mp4` and `filename_timestamp.gif` in the current directory.
 
-## Configuration
+## Other notes
 
-You can modify these parameters in the code:
-- `duration`: Length of the capture in milliseconds (default: 5000ms)
-- Viewport size: Currently set to 1280x720
+- Capture duration: Length of the capture in milliseconds (default: 5000ms)
+- Viewport size: fixed to the size of the SVG file
 - FPS: Currently set to 30 frames per second
