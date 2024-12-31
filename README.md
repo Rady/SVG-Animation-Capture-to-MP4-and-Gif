@@ -31,7 +31,7 @@ The application supports both local files and URLs:
 - Local file: `node index.js ./animations/my-animation.svg`
 - URL: `node index.js https://example.com/animation.svg`
 
-The output video will be saved as `output.mp4` in the current directory.
+The output will be saved as `filename_timestamp.mp4` and `filename_timestamp.gif` in the current directory.
 
 ## Configuration
 
