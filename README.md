@@ -24,14 +24,18 @@ This Node.js application captures SVG animations and converts them to MP4 and GI
 
 Run the application by providing the path to your SVG file:
 ```bash
-node index.js path/to/your/animation.svg
+node index.js \
+   --svg path/to/your/animation.svg \
+   --scale 3 \
+   --repeat 2 \
+   --fps 30
 ```
 
 The application supports both local files and URLs:
-- Local file: `node index.js ./animations/my-animation.svg`
-- URL: `node index.js https://example.com/animation.svg`
+- Local file: `node index.js --svg ./animations/my-animation.svg`
+- URL: `node index.js --svg https://example.com/animation.svg`
 
-The output will be saved as `filename_timestamp.mp4` and `filename_timestamp.gif` in the current directory.
+The output will be saved as `{filename}_{timestamp}.mp4` and `{filename}_{timestamp}.gif` in the current directory.
 
 ## Other notes
 

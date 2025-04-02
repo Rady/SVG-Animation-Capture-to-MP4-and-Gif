@@ -7,7 +7,7 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "puppeteer": "^21.6.1",
-    "fluent-ffmpeg": "^2.1.2"
+    "fluent-ffmpeg": "^2.1.2",
+    "puppeteer": "^24.5.0"
   }
 }
