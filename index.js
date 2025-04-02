@@ -2,6 +2,7 @@ const puppeteer = require('puppeteer');
 const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs');
 const path = require('path');
+const yargs = require('yargs');
 
 function generateTimestamp() {
     const now = new Date();
@@ -19,8 +20,8 @@ function getUniqueFilename(originalPath, extension) {
     return path.join(dir, `${basename}_${timestamp}.${extension}`);
 }
 
-async function getAnimationDuration(page) {
-    const duration = await page.evaluate(() => {
+async function getAnimationDuration(page, repeat) {
+    const duration = await page.evaluate((repeat) => {
         // Helper function to parse time values (s or ms)
         const parseTime = (timeStr) => {
             if (!timeStr) return 0;
@@ -46,7 +47,7 @@ async function getAnimationDuration(page) {
 
             // Handle repeat scenarios
             if (repeatCount === 'indefinite' || repeatDur) {
-                totalDuration = repeatDur || (durValue * 3); // Default to 3 iterations for indefinite
+                totalDuration = repeatDur || (durValue * repeat); // Default to 3 iterations for indefinite
             } else if (!isNaN(repeatCount)) {
                 totalDuration = durValue * parseFloat(repeatCount);
             }
@@ -78,7 +79,7 @@ async function getAnimationDuration(page) {
         }
 
         return maxDuration || 5000; // Default to 5000ms if no animations found
-    });
+    }, repeat);
 
     return duration;
 }
@@ -130,7 +131,14 @@ async function getSVGDimensions(page) {
     return dimensions || { width: 1280, height: 720 }; // Default dimensions if nothing is found
 }
 
-async function captureAnimation(svgUrl, outputPath) {
+async function delay(time) {
+    return new Promise(function(resolve) { 
+        setTimeout(resolve, time)
+    });
+}
+
+async function captureAnimation({svgUrl, outputPath, repeat, deviceScaleFactor, fps}) {
+
     // Create output directory if it doesn't exist
     const screenshotsDir = path.join(__dirname, 'screenshots');
     if (!fs.existsSync(screenshotsDir)) {
@@ -147,29 +155,30 @@ async function captureAnimation(svgUrl, outputPath) {
     const dimensions = await getSVGDimensions(page);
     console.log(`Detected SVG dimensions: ${dimensions.width}x${dimensions.height}`);
 
+    if (deviceScaleFactor != 1) {
+        console.log(`Using device scale factor: ${deviceScaleFactor}`);
+    }
+
     // Set viewport to match SVG dimensions
     await page.setViewport({
         width: Math.ceil(dimensions.width),
         height: Math.ceil(dimensions.height),
-        deviceScaleFactor: 2  // Set back to 1 for consistent dimensions
+        deviceScaleFactor: deviceScaleFactor  // Set back to 1 for consistent dimensions
     });
 
     // Get animation duration
-    const duration = await getAnimationDuration(page);
+    const duration = await getAnimationDuration(page, repeat);
     console.log(`Detected animation duration: ${duration}ms`);
 
     // Capture frames
     const frames = [];
-    const fps = 30;
     const totalFrames = Math.ceil((duration / 1000) * fps);
     const frameInterval = duration / totalFrames; // Calculate exact interval between frames
     
     console.log(`Capturing ${totalFrames} frames at ${fps} FPS...`);
     console.log(`Frame interval: ${frameInterval}ms`);
     
-    // Use page.evaluate to control animation timing
     await page.evaluate(() => {
-        // Reset all animations
         document.querySelectorAll('*').forEach(element => {
             const animations = element.getAnimations();
             animations.forEach(animation => {
@@ -181,15 +190,24 @@ async function captureAnimation(svgUrl, outputPath) {
 
     let currentTime = 0;
     for (let i = 0; i < totalFrames; i++) {
-        // Set current time for animations
         await page.evaluate((time) => {
             document.querySelectorAll('*').forEach(element => {
                 const animations = element.getAnimations();
                 animations.forEach(animation => {
                     animation.currentTime = time;
+                    animation.pause(); // Pause animation at current time
                 });
             });
         }, currentTime);
+
+        await page.evaluate((time) => {
+            const svg = document.querySelector('svg');
+            if (svg && typeof svg.setCurrentTime === 'function') {
+                svg.setCurrentTime(time / 1000);  // Move animation forward
+            }
+        }, currentTime);
+
+        delay(50); // Allow some time for the frame to render
 
         const framePath = path.join(screenshotsDir, `frame-${i.toString().padStart(4, '0')}.png`);
         await page.screenshot({
@@ -200,6 +218,8 @@ async function captureAnimation(svgUrl, outputPath) {
         frames.push(framePath);
         
         currentTime += frameInterval;
+        const progress = Math.round((i / totalFrames) * 100);
+        process.stdout.write(`\rProgress: ${progress}%`);
     }
 
     await browser.close();
@@ -208,9 +228,14 @@ async function captureAnimation(svgUrl, outputPath) {
     const mp4Path = getUniqueFilename(outputPath, 'mp4');
     const gifPath = getUniqueFilename(outputPath, 'gif');
 
+    console.log(' ');
+    
+    console.log('------ Output Information ------');
     console.log('Generating MP4 and GIF outputs...');
     console.log(`MP4 output: ${mp4Path}`);
     console.log(`GIF output: ${gifPath}`);
+    console.log('---------------------------------');
+    console.log(' ');
 
     // Convert frames to video and GIF
     return Promise.all([
@@ -223,7 +248,7 @@ async function captureAnimation(svgUrl, outputPath) {
                 .outputOptions([
                     '-vf', [
                         `fps=${fps}`,
-                        `scale=${dimensions.width}:${dimensions.height}:flags=lanczos`,
+                        `scale=${dimensions.width * deviceScaleFactor}:${dimensions.height * deviceScaleFactor}:flags=lanczos`,
                         'split[s0][s1]',
                         '[s0]palettegen=max_colors=256[p]',
                         '[s1][p]paletteuse=dither=floyd_steinberg'
@@ -263,7 +288,7 @@ async function captureAnimation(svgUrl, outputPath) {
                     '-tune animation',
                     '-maxrate 2M',
                     '-bufsize 4M',
-                    '-vf', `scale=${dimensions.width}:${dimensions.height}`
+                    '-vf', `scale=${dimensions.width * deviceScaleFactor}:${dimensions.height * deviceScaleFactor}`
                 ])
                 .on('start', (commandLine) => {
                     console.log('MP4 Spawned FFmpeg with command:', commandLine);
@@ -303,26 +328,77 @@ async function captureAnimation(svgUrl, outputPath) {
     });
 }
 
-// Example usage
 async function main() {
     try {
-        // Get SVG path from command line arguments
-        const args = process.argv.slice(2);
-        if (args.length === 0) {
-            console.error('Please provide the path to your SVG file.');
-            console.error('Usage: node index.js <path-to-svg>');
-            process.exit(1);
-        }
+        const argv = yargs
+            .option('svg', {
+                alias: 's',
+                description: 'Path to the SVG file',
+                type: 'string',
+                demandOption: true, // svg path is required
+            })
+            .option('output', {
+                alias: 'o',
+                description: 'Path to save the output',
+                type: 'string',
+                default: process.cwd(), // Default to current working directory if not provided
+            })
+            .option('fps', {
+                alias: 'f',
+                description: 'Frames per second',
+                type: 'number',
+                default: 30, // Default to 30 FPS
+            })
+            .option('repeat', {
+                alias: 'r',
+                description: 'Number of times to repeat the animation',
+                type: 'number',
+                default: 3, // Default duration to 10 seconds
+            })
+            .option('scale', {
+                alias: 'c',
+                description: 'Device scale factor for rendering',
+                type: 'number',
+                default: 1, // Default duration to 10 seconds
+            })
+            .help()
+            .alias('help', 'h')
+            .argv;
+        
+        // Get the SVG path, output path, and other options from parsed arguments
+        const svgPath = argv.svg;
+        const outputBasePath = argv.output;
+        const fps = argv.fps;
+        const repeat = argv.repeat;
+        const deviceScaleFactor = argv.scale;
 
-        const svgPath = args[0];
         // Convert to file URL if it's a local path
         const svgUrl = svgPath.startsWith('http') ? svgPath : `file://${path.resolve(svgPath)}`;
-        const outputBasePath = path.join(process.cwd(), path.basename(svgPath, '.svg'));
-        
-        console.log('Starting animation capture...');
-        console.log(`Input SVG: ${svgPath}`);
-        
-        await captureAnimation(svgUrl, outputBasePath);
+
+        let finalOutputBasePath = outputBasePath;
+        if (outputBasePath === process.cwd()) {
+            // If no output path is provided, use the current working directory
+            finalOutputBasePath = path.join(process.cwd(), path.basename(svgPath, '.svg'));
+        }
+
+        // Log the input information
+        console.log('------ Input Information ------');
+        console.log(`Input SVG: ${svgUrl}`);
+        console.log(`Output Base Path: ${finalOutputBasePath}`);
+        console.log(`FPS: ${fps}`);
+        console.log(`Repeat animation ${repeat} times`);
+        console.log(`Device Scale Factor: ${deviceScaleFactor}`);
+        console.log('-------------------------------');
+        console.log(' ');
+
+        // Call the captureAnimation function with the parsed options
+        await captureAnimation({
+            svgUrl: svgUrl,  // this can be directly passed as a string if it's not an object
+            outputPath: finalOutputBasePath,
+            fps: fps,
+            repeat: repeat,
+            deviceScaleFactor: deviceScaleFactor
+        });
     } catch (error) {
         console.error('Error capturing animation:', error);
         process.exit(1);
